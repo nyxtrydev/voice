@@ -1,0 +1,38 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: voiceagentos
+      POSTGRES_PASSWORD: voiceagentos
+      POSTGRES_DB: voiceagentos
+    ports:
+      - "5432:5432"
+    volumes:
+      - voiceagentos_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U voiceagentos -d voiceagentos"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      HOST: 0.0.0.0
+      PUBLIC_BASE_URL: http://localhost:4000
+      DATABASE_URL: postgres://voiceagentos:voiceagentos@postgres:5432/voiceagentos
+      JWT_SECRET: change-me-before-deploying
+      CORS_ORIGIN: http://localhost:4000
+    ports:
+      - "4000:4000"
+    command: sh -c "node dist/src/db/migrate.js && node dist/src/server.js"
+
+volumes:
+  voiceagentos_pg:
