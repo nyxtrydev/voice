@@ -16,6 +16,7 @@ services:
       timeout: 5s
       retries: 10
 
+  # ── Backend: API + Twilio Media Streams WebSocket (no frontend) ──
   api:
     build: .
     restart: unless-stopped
@@ -26,13 +27,24 @@ services:
       NODE_ENV: production
       PORT: 4000
       HOST: 0.0.0.0
+      # Public URL Twilio reaches the backend on (used to build webhook + wss URLs).
       PUBLIC_BASE_URL: http://localhost:4000
       DATABASE_URL: postgres://voiceagentos:voiceagentos@postgres:5432/voiceagentos
       JWT_SECRET: change-me-before-deploying
-      CORS_ORIGIN: http://localhost:4000
+      # Allow the frontend origin to call the API directly (browser → :8080).
+      CORS_ORIGIN: http://localhost:8080
     ports:
       - "4000:4000"
     command: sh -c "node dist/src/db/migrate.js && node dist/src/server.js"
+
+  # ── Frontend: React dashboard served by nginx, proxies /api → api ──
+  web:
+    build: ./web
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "8080:80"
 
 volumes:
   voiceagentos_pg:

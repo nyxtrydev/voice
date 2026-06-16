@@ -4,6 +4,7 @@ A no-code AI voice agent platform. Create agents in minutes, deploy to a phone n
 
 ## Stack
 
+- React 18 + TypeScript dashboard (Vite) in [`web/`](web/) — a **separate** nginx-served service that proxies `/api` to the backend
 - Fastify 5 API + WebSocket (Twilio Media Streams)
 - PostgreSQL 16
 - JWT auth with bcrypt
@@ -62,13 +63,34 @@ This starts ngrok, updates `PUBLIC_BASE_URL` in `.env`, prints your Twilio webho
 
 > **Why the tunnel?** Twilio's Media Streams WebSocket needs a public HTTPS/WSS URL to connect to your local server. `npm run dev` alone won't work for real phone calls because `localhost` is unreachable from Twilio.
 
-If you only need the dashboard/API (no real calls), you can run:
+If you only need the API (no real calls), you can run just the backend:
 
 ```bash
 npm run dev
 ```
 
-The server listens on `http://localhost:4000`.
+The API listens on `http://localhost:4000` (API-only — it does **not** serve the dashboard).
+
+### Frontend / backend are separate services
+
+The dashboard lives in [`web/`](web/) (React + TypeScript + Vite) and is deployed
+independently of the API. Nothing in the backend serves the SPA.
+
+**Local development (hot reload):** run the backend and the Vite dev server side by side:
+
+```bash
+npm run dev        # backend API on :4000
+npm run dev:web    # Vite dev server on :5173 (proxies /api, /ws, /twilio → :4000)
+```
+
+Open `http://localhost:5173`.
+
+**Production:** `docker compose up --build` runs three services — `postgres`, `api`
+(backend), and `web` (nginx serving the built dashboard and proxying `/api` → `api:4000`).
+The dashboard is then at `http://localhost:8080` and the API at `http://localhost:4000`.
+To build the dashboard alone: `npm run build:web` (output in `web/dist`).
+
+The previous vanilla-JS dashboard is preserved in [`legacy/`](legacy/) for reference.
 
 ### Twilio Webhook Setup
 

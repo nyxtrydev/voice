@@ -1,3 +1,4 @@
+# ── Backend (API + WebSocket voice runtime) — standalone service ──
 FROM node:22-alpine AS deps
 WORKDIR /app
 COPY package*.json ./
@@ -16,8 +17,5 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/db ./db
-COPY --from=build /app/index.html ./index.html
-COPY --from=build /app/styles.css ./styles.css
-COPY --from=build /app/app.js ./app.js
 EXPOSE 4000
 CMD ["node", "dist/src/server.js"]

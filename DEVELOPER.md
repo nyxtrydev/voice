@@ -9,30 +9,30 @@ This document covers the implementation, the runtime internals, and how to host 
 ## 1. Architecture at a glance
 
 ```
-                       ┌─────────────────────────────────────────────┐
-   Caller (PSTN) ──▶ Twilio ──▶ Media Streams (WSS)                   │
-                       │            │                                 │
-                       │   POST /twilio/voice  (returns TwiML)        │
-                       │            │                                 │
-                       ▼            ▼                                 │
-                 ┌──────────────────────────────────────────┐        │
-                 │            Fastify 5 server               │        │
-                 │  ┌─────────────┐   ┌────────────────────┐ │        │
-   Browser ───▶  │  │ REST + SSE  │   │ /ws  Media Streams │ │        │
-   (dashboard)   │  │ /api/*      │   │ voice runtime loop │ │        │
-                 │  └──────┬──────┘   └─────────┬──────────┘ │        │
-                 │         │                    │            │        │
-                 └─────────┼────────────────────┼────────────┘        │
-                           │                    │                     │
-                           ▼                    ▼                     │
-                     ┌──────────┐   ┌──────────────────────────┐      │
-                     │ Postgres │   │ Groq (LLM + Whisper STT)  │ ◀────┘
-                     │   16     │   │ Sarvam (TTS + STT)        │
-                     └──────────┘   └──────────────────────────┘
+                    ┌──────────────────────┐
+   Browser ───────▶ │  Frontend (nginx)    │   serves React SPA;
+   (dashboard)      │  web/ → web/dist     │   proxies /api ─┐
+                    └──────────────────────┘                │
+                                                            ▼
+   Caller (PSTN) ─▶ Twilio ─▶ /twilio/voice (TwiML) ──▶ ┌───────────────────────────┐
+                                  Media Streams (WSS) ─▶ │   Backend — Fastify (API) │
+                                                         │  ┌──────────┐ ┌────────┐ │
+                                                         │  │REST + SSE│ │ /ws    │ │
+                                                         │  │ /api/*   │ │ voice  │ │
+                                                         │  └────┬─────┘ └───┬────┘ │
+                                                         └───────┼───────────┼──────┘
+                                                                 ▼           ▼
+                                                ┌──────────┐  ┌───────────────────────────┐
+                                                │ Postgres │  │ Groq (LLM + Whisper STT)  │
+                                                │   16     │  │ Sarvam (TTS + STT)        │
+                                                └──────────┘  └───────────────────────────┘
 ```
+The frontend and backend are independent services. The browser only talks to the frontend
+(which proxies `/api` to the backend); Twilio talks to the backend directly.
 
+- **Separate frontend & backend** — the Fastify app is **API-only** and serves no static files. The React dashboard (`web/`) is an independent service (nginx) that reverse-proxies `/api` to the backend, so the browser stays same-origin.
 - **Control plane** — REST API (`/api/*`) for auth, agent CRUD, knowledge upload, provisioning, analytics; Server-Sent Events (`/api/agents/:id/sse`) push live call/booking events to the dashboard.
-- **Data plane** — Twilio dials the agent's webhook (`/twilio/voice`), which returns TwiML that opens a Media Streams WebSocket to `/ws`. All real-time audio flows over that socket.
+- **Data plane** — Twilio dials the agent's webhook (`/twilio/voice`), which returns TwiML that opens a Media Streams WebSocket to `/ws`. All real-time audio flows over that socket. Twilio reaches the backend directly, not through the frontend.
 - **Stateless app, stateful DB** — the Fastify process holds no durable state; all data lives in Postgres. Per-call state (VAD buffers, conversation history, pinned caller facts) lives only for the lifetime of a single WebSocket connection.
 
 ---
@@ -42,7 +42,8 @@ This document covers the implementation, the runtime internals, and how to host 
 | Layer            | Choice                                                            |
 | ---------------- | ----------------------------------------------------------------- |
 | Runtime          | Node.js 20+ (Docker image uses Node 22-alpine), ESM (`"type":"module"`) |
-| Web framework    | Fastify 5 + `@fastify/websocket`, `cors`, `helmet`, `formbody`, `multipart`, `static` |
+| Frontend         | React 18 + TypeScript (Vite) in `web/`, separate nginx service           |
+| Web framework    | Fastify 5 (API only) + `@fastify/websocket`, `cors`, `helmet`, `formbody`, `multipart` |
 | Language         | TypeScript 5 (strict), compiled with `tsc`; `tsx` for dev/watch    |
 | Database         | PostgreSQL 16, accessed via `pg` connection pool                   |
 | Auth             | JWT (`jsonwebtoken`) + bcrypt (`bcryptjs`) password hashing        |
@@ -88,10 +89,14 @@ This document covers the implementation, the runtime internals, and how to host 
 │   │   └── promptTemplates.ts # System-prompt templates per business type
 │   └── types/domain.ts        # Shared domain types
 ├── db/migrations/             # 001_initial.sql, 002_agent_voice.sql
-├── index.html / styles.css / app.js   # Static single-page dashboard (served at /)
+├── web/                       # SEPARATE frontend: React + TS (Vite) dashboard
+│   ├── src/                   #   App, store (context), views/, components/, lib/
+│   ├── Dockerfile            #   nginx image serving the built SPA
+│   └── nginx.conf           #   proxies /api → api:4000 (same-origin, no CORS)
+├── legacy/                    # Pre-React vanilla dashboard (index.html/styles.css/app.js)
 ├── scripts/tunnel.sh          # ngrok + dev server one-shot
-├── Dockerfile                 # Multi-stage build → node dist/src/server.js
-├── docker-compose.yml         # postgres + api (runs migrations then server)
+├── Dockerfile                 # Backend image (API only) → node dist/src/server.js
+├── docker-compose.yml         # postgres + api (backend) + web (frontend nginx)
 └── dist/                      # tsc output (generated; not edited by hand)
 ```
 
@@ -260,14 +265,27 @@ Each integration degrades gracefully: missing keys disable that capability rathe
 
 ## 10. Build & run (production process)
 
+The backend and frontend are **separate deployables**. The backend is API-only and does
+not serve any static files.
+
+Backend:
+
 ```bash
 npm ci
 npm run build            # → dist/
 npm run db:migrate       # apply schema
-NODE_ENV=production node dist/src/server.js
+NODE_ENV=production node dist/src/server.js   # API + /ws on :4000
 ```
 
-The runtime serves both the API and the static dashboard (`index.html`, `styles.css`, `app.js`) from the working directory, so those files must sit alongside `dist/` (the Dockerfile copies them).
+Frontend (built once, served by any static host / nginx):
+
+```bash
+cd web && npm ci && npm run build             # → web/dist
+```
+
+The frontend must reach the API: serve `web/dist` behind a proxy that forwards `/api`
+(and the SSE endpoint under it) to the backend, keeping the browser same-origin. The
+provided `web/Dockerfile` + `web/nginx.conf` do exactly this.
 
 Graceful shutdown: `SIGINT`/`SIGTERM` close the Fastify server and the PG pool ([src/server.ts](src/server.ts)).
 
@@ -276,30 +294,34 @@ Graceful shutdown: `SIGINT`/`SIGTERM` close the Fastify server and the PG pool (
 ## 11. Deployment & hosting
 
 ### Option A — Docker Compose (single host)
-[docker-compose.yml](docker-compose.yml) brings up `postgres` (with healthcheck + named volume) and `api`. The `api` container runs migrations then the server:
+[docker-compose.yml](docker-compose.yml) brings up **three services**: `postgres` (healthcheck + named volume), `api` (backend, root [Dockerfile](Dockerfile), runs migrations then the server on `:4000`), and `web` (frontend, [web/Dockerfile](web/Dockerfile), nginx on `:80` published to host `:8080`, proxying `/api` → `api:4000`):
 
 ```bash
 docker compose up --build -d
+# dashboard → http://localhost:8080   API → http://localhost:4000
 ```
 
-The [Dockerfile](Dockerfile) is multi-stage (deps → build → slim runtime on `node:22-alpine`, `npm ci --omit=dev`). **Before deploying, override the compose defaults** — `JWT_SECRET`, `PUBLIC_BASE_URL`, `CORS_ORIGIN`, and add `GROQ_API_KEY`, `SARVAM_API_KEY`, `TWILIO_*` (the committed compose file has placeholder secrets and no provider keys).
+Both Dockerfiles are multi-stage and slim. **Before deploying, override the compose defaults** — `JWT_SECRET`, `PUBLIC_BASE_URL`, `CORS_ORIGIN`, and add `GROQ_API_KEY`, `SARVAM_API_KEY`, `TWILIO_*` (the committed compose file has placeholder secrets and no provider keys).
 
 ### Option B — Managed platform (Render / Railway / Fly / ECS, etc.)
-- Build: `npm ci && npm run build`; Start: `node dist/src/server.js`.
-- Run `npm run db:migrate` as a release/pre-deploy step (or keep the compose-style `migrate && start` command).
-- Use a managed Postgres; set `DATABASE_URL` (add `?sslmode=require` if the provider needs TLS).
-- Bind `HOST=0.0.0.0` and the platform's `PORT`.
+Deploy the two services independently:
+- **Backend:** Build `npm ci && npm run build`; Start `node dist/src/server.js`. Run `npm run db:migrate` as a release step. Managed Postgres via `DATABASE_URL` (`?sslmode=require` if needed). Bind `HOST=0.0.0.0` and the platform's `PORT`.
+- **Frontend:** Build `cd web && npm ci && npm run build`; serve `web/dist` as static files behind a proxy that forwards `/api` (and the SSE endpoint) to the backend — or deploy the `web/` nginx image. Set its upstream to the backend's URL.
 
 ### Critical hosting requirements for live calls
-1. **Public HTTPS + WSS.** `PUBLIC_BASE_URL` must be a real `https://` origin. The app derives the Media Streams URL by swapping the scheme to `wss://`, so your TLS/reverse proxy **must upgrade and proxy WebSockets** on `/ws`. Twilio will not connect to plain `ws://` or to localhost.
-2. **Reverse proxy / `trustProxy`.** Fastify runs with `trustProxy: true`, so deploy behind a TLS-terminating proxy (Nginx, Caddy, ALB, Cloudflare). Ensure it forwards `Upgrade`/`Connection` headers and uses a generous idle/read timeout (calls can run minutes). Disable response buffering on `/api/agents/:id/sse` (SSE) and `/ws`.
-3. **Twilio webhook.** After deploy, point the number's *A call comes in* webhook to `https://<host>/twilio/voice?agentId=<AGENT_ID>` (POST), or use the in-app **Provision** action which sets it for you.
-4. **Outbound egress** to `api.groq.com` and `api.sarvam.ai` must be allowed.
+With the split architecture there are two public endpoints: the **backend** (Twilio + the dashboard's `/api`) and the **frontend** (nginx serving the SPA). Both need TLS.
 
-### Example Nginx location (WebSocket + SSE)
+1. **Public HTTPS + WSS on the backend.** `PUBLIC_BASE_URL` must be the backend's real `https://` origin. The app derives the Media Streams URL by swapping the scheme to `wss://`, so the backend's TLS/reverse proxy **must upgrade and proxy WebSockets** on `/ws`. Twilio will not connect to plain `ws://` or to localhost.
+2. **Reverse proxy / `trustProxy`.** Fastify runs with `trustProxy: true`, so deploy the backend behind a TLS-terminating proxy (Nginx, Caddy, ALB, Cloudflare). It must forward `Upgrade`/`Connection` headers and use a generous idle/read timeout (calls run minutes). Disable response buffering on `/api/agents/:id/sse` (SSE) and `/ws`. The frontend's own nginx ([web/nginx.conf](web/nginx.conf)) handles SSE buffering for `/api` already.
+3. **Twilio webhook.** After deploy, point the number's *A call comes in* webhook to `https://<backend-host>/twilio/voice?agentId=<AGENT_ID>` (POST), or use the in-app **Provision** action which sets it for you.
+4. **Frontend → backend reachability.** The frontend nginx upstream (`proxy_pass`) must resolve the backend (service name `api` in compose, or the backend's URL otherwise).
+5. **Outbound egress** to `api.groq.com` and `api.sarvam.ai` must be allowed from the backend.
+
+### Example Nginx for the backend (TLS termination, WebSocket + SSE)
+This sits in front of the **backend** so Twilio's `/ws` and the dashboard's `/api` reach it over TLS. (The frontend container has its own nginx in [web/nginx.conf](web/nginx.conf).)
 ```nginx
 location / {
-    proxy_pass http://127.0.0.1:4000;
+    proxy_pass http://127.0.0.1:4000;   # backend API
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection "upgrade";
@@ -352,11 +374,16 @@ location / {
 
 ## 14. Hosting walkthroughs — EC2 vs Vercel
 
-### Can this run on Vercel? No (not the backend).
+### Where each piece can run
 
-VoiceAgentOS depends on a **persistent inbound WebSocket** for Twilio Media Streams (`/ws`) that stays open for the whole call, plus a long-running Fastify process and a stateful in-process SSE hub. Vercel is serverless: functions are short-lived, can't accept long-lived inbound WebSocket upgrades, and the function instance can be torn down mid-request. So **the voice runtime cannot run on Vercel.**
+The app is now two deployables, so they can be hosted differently:
 
-What *is* possible (optional, not required): split the repo and host only a static dashboard front-end on Vercel while the Fastify backend (API + `/ws`) runs on EC2. But the dashboard here is already served by the same Fastify server, so this split adds work for no benefit. **Recommendation: host the whole app on EC2 (or any persistent VM/container host).** The rest of this section is the EC2 path.
+- **Backend (API + `/ws`) — must be a persistent host (EC2 / VM / container).** It depends on a long-lived inbound WebSocket for Twilio Media Streams that stays open for the whole call, a long-running Fastify process, and a stateful in-process SSE hub. Vercel is serverless (short-lived functions, no persistent inbound WebSockets, instances torn down mid-request) — **the voice runtime cannot run on Vercel.**
+- **Frontend (React dashboard) — can run anywhere static.** Since it's a separate Vite build that just needs `/api` proxied to the backend, you can:
+  - **co-host it on the same EC2 box** behind one domain (recommended — keeps the browser same-origin, one TLS cert, no CORS), or
+  - **host it on Vercel/Netlify/CDN** and add a rewrite so `/api/*` (and the SSE endpoint) forwards to the backend host. Cross-origin works too, but then set the backend `CORS_ORIGIN` to the frontend's origin.
+
+**Recommendation: run all three containers (postgres + api + web) on one EC2 box behind a single nginx + TLS.** That's the path below.
 
 ---
 
@@ -393,11 +420,14 @@ You can now choose **Path A (Docker — recommended)** or **Path B (native Node 
    curl -fsSL https://get.docker.com | sudo sh
    sudo usermod -aG docker $USER && newgrp docker
    ```
-2. Harden the compose file so the app port is **not** public — bind it to localhost and remove the placeholder secrets. Edit `docker-compose.yml`:
+2. Harden the compose file so the container ports are **not** public — bind both `api` and `web` to localhost (host nginx terminates TLS in front of them). Edit `docker-compose.yml`:
    ```yaml
    api:
      ports:
        - "127.0.0.1:4000:4000"     # was "4000:4000"
+   web:
+     ports:
+       - "127.0.0.1:8080:80"       # was "8080:80"
    ```
    Provide real secrets via an env file instead of inline values. Create `.env` (compose reads it for `${VAR}` substitution, or use `env_file:`):
    ```bash
@@ -413,14 +443,15 @@ You can now choose **Path A (Docker — recommended)** or **Path B (native Node 
    TWILIO_AUTH_TOKEN=...
    TWILIO_PHONE_NUMBER=+1XXXXXXXXXX
    ```
-   Point the compose `api.environment` (and the `postgres` password) at these values. The `api` service already runs `migrate` then `server` on start.
+   Point the compose `api.environment` (and the `postgres` password) at these values. The `api` service already runs `migrate` then `server` on start; the `web` service builds the dashboard and serves it via nginx.
 3. Bring it up:
    ```bash
    docker compose up --build -d
    docker compose logs -f api        # watch boot + migrations
-   curl -s http://127.0.0.1:4000/healthz   # {"ok":true,...}
+   curl -s http://127.0.0.1:4000/healthz   # {"ok":true,...}  (backend)
+   curl -sI http://127.0.0.1:8080/ | head -1   # 200 (frontend)
    ```
-4. Continue to **Step 3 (Nginx + TLS)** below.
+4. Continue to **Step 3 (Nginx + TLS)** below. Because the host nginx routes `/api` straight to the backend, the dashboard is served same-origin and no CORS is involved.
 
 > Postgres data persists in the `voiceagentos_pg` Docker volume. Back it up (`docker compose exec postgres pg_dump ...`). For production-grade durability, consider **Amazon RDS for PostgreSQL** instead — drop the `postgres` service and point `DATABASE_URL` at the RDS endpoint (`?sslmode=require`).
 
@@ -455,7 +486,11 @@ You can now choose **Path A (Docker — recommended)** or **Path B (native Node 
    EOF
    set -a && . /etc/voiceagentos.env && set +a && npm run db:migrate
    ```
-3. Create a systemd service `/etc/systemd/system/voiceagentos.service`:
+   Build the frontend too (host nginx serves it directly in this path):
+   ```bash
+   cd ~/voiceagentos/web && npm ci && npm run build   # → web/dist
+   ```
+3. Create a systemd service `/etc/systemd/system/voiceagentos.service` (backend only):
    ```ini
    [Unit]
    Description=VoiceAgentOS
@@ -482,25 +517,40 @@ You can now choose **Path A (Docker — recommended)** or **Path B (native Node 
 ---
 
 ### Step 3 — Nginx reverse proxy + TLS (both paths)
-TLS is mandatory: Twilio only connects over `https`/`wss`. Nginx terminates TLS and proxies to the app on `127.0.0.1:4000`, upgrading WebSockets.
+TLS is mandatory: Twilio only connects over `https`/`wss`. One host nginx serves a single domain and routes by path: backend traffic (`/api`, `/twilio`, `/ws`, `/healthz`) → the API on `127.0.0.1:4000` (upgrading WebSockets); everything else → the dashboard.
+
+For the **frontend root** (`location /`), pick the line matching your path:
+- **Path A (Docker):** `proxy_pass http://127.0.0.1:8080;` (the `web` container).
+- **Path B (native):** serve the build directly — `root /home/ubuntu/voiceagentos/web/dist;` + `try_files $uri /index.html;` (shown commented below).
 
 ```bash
 sudo apt -y install nginx
 sudo tee /etc/nginx/sites-available/voiceagentos >/dev/null <<'NGINX'
+map $http_upgrade $connection_upgrade { default upgrade; '' close; }
+
 server {
     listen 80;
     server_name voice.yourdomain.com;
 
-    location / {
+    # Backend: REST, SSE, Twilio webhook + Media Streams WebSocket
+    location ~ ^/(api|twilio|ws|healthz) {
         proxy_pass http://127.0.0.1:4000;
         proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;     # WebSocket upgrade for /ws
-        proxy_set_header Connection "upgrade";
+        proxy_set_header Upgrade $http_upgrade;          # WebSocket upgrade for /ws
+        proxy_set_header Connection $connection_upgrade;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 600s;                    # long calls
-        proxy_buffering off;                        # SSE + streamed audio
+        proxy_read_timeout 600s;                         # long calls
+        proxy_buffering off;                             # SSE + streamed audio
+    }
+
+    # Frontend dashboard
+    location / {
+        proxy_pass http://127.0.0.1:8080;                # Path A (Docker web container)
+        # Path B (native) — comment the line above and use instead:
+        #   root /home/ubuntu/voiceagentos/web/dist;
+        #   try_files $uri /index.html;
     }
 }
 NGINX
@@ -513,7 +563,7 @@ sudo apt -y install certbot python3-certbot-nginx
 sudo certbot --nginx -d voice.yourdomain.com --redirect -m you@example.com --agree-tos -n
 ```
 
-Verify from your laptop: `https://voice.yourdomain.com/healthz` returns `{"ok":true,...}`.
+Verify from your laptop: `https://voice.yourdomain.com/healthz` returns `{"ok":true,...}` (backend reachable) and `https://voice.yourdomain.com/` loads the dashboard (frontend reachable).
 
 ### Step 4 — Wire up Twilio
 1. Twilio Console → Phone Numbers → your number → **Voice & Fax → A call comes in**:
@@ -523,7 +573,10 @@ Verify from your laptop: `https://voice.yourdomain.com/healthz` returns `{"ok":t
 3. Place a test call and watch logs (`docker compose logs -f api` or `journalctl -u voiceagentos -f`).
 
 ### Step 5 — Operational notes for EC2
-- **Updates/deploys:** `git pull && docker compose up --build -d` (Path A) or `git pull && npm ci && npm run build && npm run db:migrate && sudo systemctl restart voiceagentos` (Path B). Active calls drop on restart — deploy during a quiet window.
+- **Updates/deploys:**
+  - Path A: `git pull && docker compose up --build -d` (rebuilds both `api` and `web`).
+  - Path B: `git pull && npm ci && npm run build && npm run db:migrate && sudo systemctl restart voiceagentos`, then rebuild the frontend `cd web && npm ci && npm run build` (host nginx picks up `web/dist` immediately — no reload needed).
+  - Active calls drop on backend restart — deploy during a quiet window.
 - **Scaling:** the in-process SSE hub and per-call WebSocket pinning mean a single instance is simplest. If you ever put this behind an ALB with >1 instance, enable **sticky sessions** for `/ws` and `/api/agents/:id/sse`, or move the SSE hub to Redis (see §11).
 - **Cost/right-sizing:** a single `t3.small` comfortably handles low call volume. CPU spikes are mostly during the build; consider building a Docker image in CI and pulling it rather than building on the box.
 - **Backups:** snapshot the Postgres volume / use RDS automated backups; keep `JWT_SECRET` and provider keys in a secret store, not in the repo.

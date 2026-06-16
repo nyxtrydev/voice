@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "dev:tunnel": "bash scripts/tunnel.sh",
+    "dev:web": "npm --prefix web run dev",
     "build": "tsc",
+    "build:web": "npm --prefix web install && npm --prefix web run build",
+    "build:all": "npm run build && npm run build:web",
     "start": "node dist/src/server.js",
     "db:migrate": "tsx src/db/migrate.ts",
     "typecheck": "tsc --noEmit"

@@ -2,7 +2,6 @@ import cors from "@fastify/cors";
 import formbody from "@fastify/formbody";
 import helmet from "@fastify/helmet";
 import multipart from "@fastify/multipart";
-import fastifyStatic from "@fastify/static";
 import websocket from "@fastify/websocket";
 import Fastify from "fastify";
 import { ZodError } from "zod";
@@ -12,8 +11,6 @@ import { agentRoutes } from "./routes/agents.js";
 import { authRoutes } from "./routes/auth.js";
 import { healthRoutes } from "./routes/health.js";
 import { twilioRoutes } from "./routes/twilio.js";
-
-const rootDir = process.cwd();
 
 export async function buildApp() {
   const app = Fastify({
@@ -33,11 +30,10 @@ export async function buildApp() {
   await app.register(formbody);
   await app.register(multipart);
   await app.register(websocket);
-  await app.register(fastifyStatic, {
-    root: rootDir,
-    prefix: "/",
-    index: ["index.html"]
-  });
+
+  // API-only service — the React dashboard is a separate deployable (see web/).
+  // Root route is a lightweight banner so hitting the API host isn't a bare 404.
+  app.get("/", async () => ({ service: "voiceagentos-api", status: "ok" }));
 
   await app.register(healthRoutes);
   await app.register(authRoutes);
