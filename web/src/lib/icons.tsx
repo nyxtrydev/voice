@@ -32,6 +32,8 @@ export function AgentsIcon() {
   );
 }
 
+//comment env update
+
 export function BookingsIcon() {
   return (
     <svg viewBox="0 0 20 20" fill="none">
