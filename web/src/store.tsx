@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode
 } from "react";
-import { api, getToken, setApiHooks } from "./api";
+import { api, API_BASE, getToken, setApiHooks } from "./api";
 import type {
   Agent,
   AgentEvent,
@@ -183,7 +183,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const token = getToken();
       if (!agentId || !token) return;
 
-      const es = new EventSource(`/api/agents/${agentId}/sse?token=${token}`);
+      const es = new EventSource(`${API_BASE}/api/agents/${agentId}/sse?token=${token}`);
       sseRef.current = es;
 
       es.addEventListener("connected", () => setSseConnected(true));

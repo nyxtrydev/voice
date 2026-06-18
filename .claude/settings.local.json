@@ -3,7 +3,9 @@
     "allow": [
       "Bash(pkill -f \"dist/src/server.js\")",
       "Bash(pkill -f \"tsx watch\")",
-      "Bash(pkill -f \"vite\")"
+      "Bash(pkill -f \"vite\")",
+      "Bash(npx tsc *)",
+      "Bash(echo \"EXIT: $?\")"
     ]
   }
 }

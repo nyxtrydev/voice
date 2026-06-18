@@ -1,5 +1,10 @@
 const TOKEN_KEY = "vaos_token";
 
+// Base URL for the backend API. Set VITE_API_URL in production (e.g. Vercel) to
+// the separately-hosted backend domain. Empty in local dev so requests stay
+// relative and go through the Vite proxy in vite.config.ts.
+export const API_BASE = (import.meta.env.VITE_API_URL ?? "https://voice.nyxtry.in").replace(/\/$/, "");
+
 export class ApiError extends Error {
   status: number;
   constructor(message: string, status: number) {
@@ -32,7 +37,7 @@ async function request<T = unknown>(
   if (token) headers["Authorization"] = `Bearer ${token}`;
   if (!isMultipart) headers["Content-Type"] = "application/json";
 
-  const res = await fetch(path, {
+  const res = await fetch(`${API_BASE}${path}`, {
     method,
     headers,
     body: isMultipart ? (body as BodyInit) : body !== undefined ? JSON.stringify(body) : undefined
