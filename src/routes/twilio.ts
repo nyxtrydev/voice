@@ -82,7 +82,7 @@ function normalizeBookingDate(value: unknown, todayIso: string): string | null {
 
 // VAD — 20 ms chunks at 8 kHz (160 samples each)
 const SPEECH_RMS_THRESHOLD = 500;
-const SILENCE_CHUNKS_END   = 50;   // 50 × 20 ms = 1 000 ms silence
+const SILENCE_CHUNKS_END   = 35;   // 35 × 20 ms = 700 ms silence (end-of-turn)
 const MAX_SPEECH_CHUNKS    = 1500; // 30 s safety cap
 const MIN_SPEECH_CHUNKS    = 8;    // 8 × 20 ms = 160 ms minimum real speech
 const INTERRUPT_MIN_CHUNKS = 6;    // 6 × 20 ms = 120 ms sustained speech before barging in over the bot
