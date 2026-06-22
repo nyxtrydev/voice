@@ -12,16 +12,26 @@ interface ConsoleMsg {
 }
 
 const VOICES = [
-  { value: "priya", label: "Priya — Female (Sarvam AI)" },
-  { value: "shubh", label: "Subh — Male (Sarvam AI)" }
+  { value: "anushka",  label: "Anushka — Female (Sarvam AI)" },
+  { value: "manisha",  label: "Manisha — Female (Sarvam AI)" },
+  { value: "vidya",    label: "Vidya — Female (Sarvam AI)" },
+  { value: "arya",     label: "Arya — Female (Sarvam AI)" },
+  { value: "abhilash", label: "Abhilash — Male (Sarvam AI)" },
+  { value: "karun",    label: "Karun — Male (Sarvam AI)" },
+  { value: "hitesh",   label: "Hitesh — Male (Sarvam AI)" }
 ];
+
+// Map legacy v3-beta voices on older agents to their v2 equivalents so the
+// dropdown always shows a valid selection.
+const LEGACY_VOICE_MAP: Record<string, string> = { priya: "anushka", shubh: "abhilash" };
+const normalizeVoice = (v?: string | null) => (v && LEGACY_VOICE_MAP[v]) || v || "anushka";
 
 export function PromptsView({ active }: { active: boolean }) {
   const { selectedAgent: agent, savePrompt, showToast, testChat } = useStore();
   const viewClass = "view" + (active ? " active" : "");
 
   const [prompt, setPrompt] = useState(agent?.systemPrompt || "");
-  const [voice, setVoice] = useState(agent?.voice || "priya");
+  const [voice, setVoice] = useState(normalizeVoice(agent?.voice));
   const [saving, setSaving] = useState(false);
 
   const [messages, setMessages] = useState<ConsoleMsg[]>([]);
@@ -41,7 +51,7 @@ export function PromptsView({ active }: { active: boolean }) {
   // When the selected agent changes, reload editor + reset console.
   useEffect(() => {
     setPrompt(agent?.systemPrompt || "");
-    setVoice(agent?.voice || "priya");
+    setVoice(normalizeVoice(agent?.voice));
     resetConsole();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent?.id]);

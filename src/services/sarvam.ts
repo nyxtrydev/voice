@@ -1,11 +1,25 @@
 import { env } from "../config/env.js";
 
+// bulbul:v2 speakers — the fast TTS model (~0.84s vs ~2.3s on v3-beta)
 export const SARVAM_VOICES = [
-  { id: "priya", label: "Priya — Female" },
-  { id: "shubh", label: "Subh — Male" },
+  { id: "anushka",  label: "Anushka — Female" },
+  { id: "manisha",  label: "Manisha — Female" },
+  { id: "vidya",    label: "Vidya — Female" },
+  { id: "arya",     label: "Arya — Female" },
+  { id: "abhilash", label: "Abhilash — Male" },
+  { id: "karun",    label: "Karun — Male" },
+  { id: "hitesh",   label: "Hitesh — Male" },
 ] as const;
 
-export const DEFAULT_SARVAM_VOICE = "priya";
+export const DEFAULT_SARVAM_VOICE = "anushka";
+
+// Legacy v3-beta speakers stored on older agents → nearest v2 equivalent.
+const LEGACY_VOICE_MAP: Record<string, string> = { priya: "anushka", shubh: "abhilash" };
+
+export function resolveVoice(voice?: string | null): string {
+  if (!voice) return DEFAULT_SARVAM_VOICE;
+  return LEGACY_VOICE_MAP[voice] ?? voice;
+}
 
 export function sarvamEnabled(): boolean {
   return !!env.SARVAM_API_KEY;
@@ -45,7 +59,7 @@ export async function sarvamTts(text: string, speaker: string): Promise<Buffer> 
       inputs: [text.slice(0, 500)],
       target_language_code: "en-IN",
       speaker,
-      model: "bulbul:v3-beta"
+      model: "bulbul:v2"
     })
   });
 

@@ -6,7 +6,7 @@ import { sarvamWavToTwilioMulaw, twilioMulawToWhisperWav, mulawRms } from "../li
 import { publishAgentEvent } from "../lib/sseHub.js";
 import { extractControlTokens, groqChatPipelined } from "../services/llm.js";
 import { analyzeSentiment } from "../services/sentiment.js";
-import { sarvamStt, sarvamTts, DEFAULT_SARVAM_VOICE } from "../services/sarvam.js";
+import { sarvamStt, sarvamTts, resolveVoice } from "../services/sarvam.js";
 import { transcribeAudio } from "../services/stt.js";
 import { buildWelcomeGreeting, mediaStreamTwiml } from "../services/twilio.js";
 import type { Agent } from "../types/domain.js";
@@ -170,7 +170,7 @@ export async function twilioRoutes(app: FastifyInstance) {
 
     async function playTts(text: string) {
       if (!agent) return;
-      const speaker = agent.voice || DEFAULT_SARVAM_VOICE;
+      const speaker = resolveVoice(agent.voice);
       const wavBuf  = await sarvamTts(text, speaker);
       const mulaw   = sarvamWavToTwilioMulaw(wavBuf);
       isBotSpeaking = true;
@@ -222,21 +222,21 @@ export async function twilioRoutes(app: FastifyInstance) {
       isProcessing = true;
       const myGeneration = turnGeneration;
       try {
-        // STT: Sarvam primary, Groq Whisper fallback
+        // STT: Groq Whisper turbo primary (fastest for English), Sarvam fallback
         const wavBuf = twilioMulawToWhisperWav(mulawBuf);
         let transcript: string;
         try {
-          transcript = await sarvamStt(wavBuf);
+          transcript = await transcribeAudio(wavBuf);
         } catch (err) {
-          request.log.warn(err, "Sarvam STT failed — trying Groq fallback");
+          request.log.warn(err, "Groq STT failed — trying Sarvam fallback");
           transcript = "";
         }
 
         if (!transcript) {
           try {
-            transcript = await transcribeAudio(wavBuf);
+            transcript = await sarvamStt(wavBuf);
           } catch (err) {
-            request.log.error(err, "Groq STT fallback also failed");
+            request.log.error(err, "Sarvam STT fallback also failed");
           }
         }
 
@@ -282,7 +282,7 @@ export async function twilioRoutes(app: FastifyInstance) {
         // LLM (streaming) + TTS per sentence, played as soon as each sentence is ready.
         // This streams audio out WHILE the model is still generating, so the caller hears
         // the first sentence almost immediately instead of waiting for the whole reply.
-        const speaker = agent.voice || DEFAULT_SARVAM_VOICE;
+        const speaker = resolveVoice(agent.voice);
         let totalAudioBytes = 0;
         let audioSent = false;
         // A turn is "stale" once the caller has spoken again (pendingTurn) or interrupted
