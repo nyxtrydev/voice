@@ -2,11 +2,12 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { pool } from "../db/pool.js";
 import { agentRepository, callRepository } from "../db/repositories.js";
-import { sarvamWavToTwilioMulaw, twilioMulawToWhisperWav, mulawRms } from "../lib/audio.js";
+import { twilioMulawToWhisperWav, mulawRms } from "../lib/audio.js";
 import { publishAgentEvent } from "../lib/sseHub.js";
 import { extractControlTokens, groqChatPipelined } from "../services/llm.js";
 import { analyzeSentiment } from "../services/sentiment.js";
-import { sarvamStt, sarvamTts, resolveVoice } from "../services/sarvam.js";
+import { sarvamStt } from "../services/sarvam.js";
+import { elevenLabsTts, resolveVoice } from "../services/elevenlabs.js";
 import { transcribeAudio } from "../services/stt.js";
 import { buildWelcomeGreeting, mediaStreamTwiml } from "../services/twilio.js";
 import type { Agent } from "../types/domain.js";
@@ -171,8 +172,7 @@ export async function twilioRoutes(app: FastifyInstance) {
     async function playTts(text: string) {
       if (!agent) return;
       const speaker = resolveVoice(agent.voice);
-      const wavBuf  = await sarvamTts(text, speaker);
-      const mulaw   = sarvamWavToTwilioMulaw(wavBuf);
+      const mulaw   = await elevenLabsTts(text, speaker);
       isBotSpeaking = true;
       sendMedia(mulaw);
       sendMark(`turn-${++turnCounter}`);
@@ -293,7 +293,7 @@ export async function twilioRoutes(app: FastifyInstance) {
 
         const enqueueAudio = (sentence: string) => {
           if (stale()) return;
-          const ttsPromise = sarvamTts(sentence, speaker).then(sarvamWavToTwilioMulaw);
+          const ttsPromise = elevenLabsTts(sentence, speaker);
           sendChain = sendChain.then(async () => {
             if (stale()) return;
             let mulaw: Buffer;

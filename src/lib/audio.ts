@@ -86,11 +86,6 @@ export function linearMonoToWav(pcm: Int16Array, sampleRate: number): Buffer {
   return buf;
 }
 
-// Sarvam WAV response → μ-law 8 kHz (for Twilio Media Streams outbound)
-export function sarvamWavToTwilioMulaw(wavBuf: Buffer): Buffer {
-  return linearToMulaw(wavToLinearMono(wavBuf, 8000));
-}
-
 // Accumulated inbound μ-law 8 kHz → WAV for Groq Whisper
 export function twilioMulawToWhisperWav(mulawBuf: Buffer): Buffer {
   return linearMonoToWav(mulawToLinear(mulawBuf), 8000);

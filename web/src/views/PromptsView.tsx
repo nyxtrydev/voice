@@ -12,19 +12,26 @@ interface ConsoleMsg {
 }
 
 const VOICES = [
-  { value: "anushka",  label: "Anushka — Female (Sarvam AI)" },
-  { value: "manisha",  label: "Manisha — Female (Sarvam AI)" },
-  { value: "vidya",    label: "Vidya — Female (Sarvam AI)" },
-  { value: "arya",     label: "Arya — Female (Sarvam AI)" },
-  { value: "abhilash", label: "Abhilash — Male (Sarvam AI)" },
-  { value: "karun",    label: "Karun — Male (Sarvam AI)" },
-  { value: "hitesh",   label: "Hitesh — Male (Sarvam AI)" }
+  { value: "f0JpDwzbGK384Dd1WH2s", label: "Diana — Female (ElevenLabs)" },
+  { value: "fPIfC3elMLbN9tNwMXkw", label: "Viraj — Male (ElevenLabs)" }
 ];
 
-// Map legacy v3-beta voices on older agents to their v2 equivalents so the
-// dropdown always shows a valid selection.
-const LEGACY_VOICE_MAP: Record<string, string> = { priya: "anushka", shubh: "abhilash" };
-const normalizeVoice = (v?: string | null) => (v && LEGACY_VOICE_MAP[v]) || v || "anushka";
+const DEFAULT_VOICE = "f0JpDwzbGK384Dd1WH2s"; // Diana
+
+// Older agents store legacy Sarvam speaker names. Map them to an ElevenLabs
+// voice so the dropdown always shows a valid selection.
+const LEGACY_VOICE_MAP: Record<string, string> = {
+  anushka:  "f0JpDwzbGK384Dd1WH2s",
+  manisha:  "f0JpDwzbGK384Dd1WH2s",
+  vidya:    "f0JpDwzbGK384Dd1WH2s",
+  arya:     "f0JpDwzbGK384Dd1WH2s",
+  abhilash: "fPIfC3elMLbN9tNwMXkw",
+  karun:    "fPIfC3elMLbN9tNwMXkw",
+  hitesh:   "fPIfC3elMLbN9tNwMXkw",
+  priya:    "f0JpDwzbGK384Dd1WH2s",
+  shubh:    "fPIfC3elMLbN9tNwMXkw"
+};
+const normalizeVoice = (v?: string | null) => (v && LEGACY_VOICE_MAP[v]) || v || DEFAULT_VOICE;
 
 export function PromptsView({ active }: { active: boolean }) {
   const { selectedAgent: agent, savePrompt, showToast, testChat } = useStore();

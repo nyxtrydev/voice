@@ -14,6 +14,9 @@ const envSchema = z.object({
   GROQ_MODEL: z.string().default("meta-llama/llama-4-scout-17b-16e-instruct"),
   GROQ_FALLBACK_MODELS: z.string().default("llama-3.3-70b-versatile,llama-3.1-8b-instant"),
   SARVAM_API_KEY: z.string().optional().default(""),
+  ELEVENLABS_API_KEY: z.string().optional().default(""),
+  // Flash v2.5 is the lowest-latency model — best for realtime telephony.
+  ELEVENLABS_MODEL: z.string().default("eleven_flash_v2_5"),
   TWILIO_ACCOUNT_SID: z.string().optional().default(""),
   TWILIO_AUTH_TOKEN: z.string().optional().default(""),
   TWILIO_PHONE_NUMBER: z.string().optional().default("")
