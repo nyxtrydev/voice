@@ -82,11 +82,28 @@ function normalizeBookingDate(value: unknown, todayIso: string): string | null {
 }
 
 // VAD — 20 ms chunks at 8 kHz (160 samples each)
-const SPEECH_RMS_THRESHOLD = 500;
+// The caller speaks into the phone mic and is far louder than people in the
+// room, so the RMS gate doubles as a proximity filter: a higher threshold
+// rejects background voices that are audible but distant. Lower it toward 600
+// if soft-spoken callers get cut off; raise it if room chatter still leaks in.
+const SPEECH_RMS_THRESHOLD = 800;
 const SILENCE_CHUNKS_END   = 35;   // 35 × 20 ms = 700 ms silence (end-of-turn)
 const MAX_SPEECH_CHUNKS    = 1500; // 30 s safety cap
-const MIN_SPEECH_CHUNKS    = 8;    // 8 × 20 ms = 160 ms minimum real speech
+const MIN_SPEECH_CHUNKS    = 16;   // 16 × 20 ms = 320 ms minimum real speech — a brief background blurt won't trigger a turn
 const INTERRUPT_MIN_CHUNKS = 6;    // 6 × 20 ms = 120 ms sustained speech before barging in over the bot
+
+// Phrases Whisper emits when fed silence or faint background noise. Matched on
+// the whole utterance only (normalized), so a real sentence containing "thank
+// you" is never dropped.
+const WHISPER_HALLUCINATIONS = new Set([
+  "", "you", "thank you", "thanks", "thank you very much", "thanks for watching",
+  "thank you for watching", "please subscribe", "subscribe", "bye", "bye bye",
+  "see you next time", "see you in the next video", "subtitles by the amara org community"
+]);
+function isWhisperHallucination(text: string): boolean {
+  const norm = text.toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
+  return norm.length < 2 || WHISPER_HALLUCINATIONS.has(norm);
+}
 const INTERRUPT_RMS_THRESHOLD = 900; // louder than normal VAD — only real speech cuts the bot off, not room noise
 
 export async function twilioRoutes(app: FastifyInstance) {
@@ -242,6 +259,15 @@ export async function twilioRoutes(app: FastifyInstance) {
 
         if (!transcript) {
           request.log.info("Empty STT — skipping turn");
+          isProcessing = false;
+          return;
+        }
+
+        // Whisper hallucinates stock filler on near-silent / background-noise
+        // audio that slipped past VAD ("you", "Thank you.", YouTube outros).
+        // These never occur as a real opening utterance — drop them.
+        if (isWhisperHallucination(transcript)) {
+          request.log.info({ transcript }, "Dropping likely STT hallucination");
           isProcessing = false;
           return;
         }
