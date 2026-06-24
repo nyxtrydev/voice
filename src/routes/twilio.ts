@@ -90,11 +90,13 @@ const SPEECH_RMS_THRESHOLD = 800;
 const SILENCE_CHUNKS_END   = 35;   // 35 × 20 ms = 700 ms silence (end-of-turn)
 const MAX_SPEECH_CHUNKS    = 1500; // 30 s safety cap
 const MIN_SPEECH_CHUNKS    = 16;   // 16 × 20 ms = 320 ms minimum real speech — a brief background blurt won't trigger a turn
-// Barge-in must be sustained for ~360 ms so a cough or short noise burst doesn't
-// cut the bot off. The counter decays (rather than hard-resetting) on quiet
-// chunks, so the micro-gaps between real syllables don't keep knocking it back
-// to zero — genuine "wait, stop" speech still reaches the threshold quickly.
-const INTERRUPT_MIN_CHUNKS = 18;   // 18 × 20 ms = 360 ms sustained speech before barging in over the bot
+// Barge-in must be sustained for ~500 ms so a cough or short noise burst doesn't
+// cut the bot off — a cough is a sharp transient that fades well before this.
+// The counter decays (rather than hard-resetting) on quiet chunks, so the
+// micro-gaps between real syllables don't keep knocking it back to zero —
+// genuine "wait, stop" speech sustains long enough to reach the threshold.
+// If interrupting the bot feels sluggish, lower toward 18 (360 ms).
+const INTERRUPT_MIN_CHUNKS = 25;   // 25 × 20 ms = 500 ms sustained speech before barging in over the bot
 
 // Phrases Whisper emits when fed silence or faint background noise. Matched on
 // the whole utterance only (normalized), so a real sentence containing "thank
@@ -108,7 +110,7 @@ function isWhisperHallucination(text: string): boolean {
   const norm = text.toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
   return norm.length < 2 || WHISPER_HALLUCINATIONS.has(norm);
 }
-const INTERRUPT_RMS_THRESHOLD = 900; // louder than normal VAD — only real speech cuts the bot off, not room noise
+const INTERRUPT_RMS_THRESHOLD = 1100; // louder than normal VAD — only close-mic speech cuts the bot off, not a noise spike
 
 export async function twilioRoutes(app: FastifyInstance) {
   const agents = agentRepository(pool);
