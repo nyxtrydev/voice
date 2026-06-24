@@ -5,7 +5,10 @@ export async function transcribeAudio(wavBuffer: Buffer): Promise<string> {
 
   const form = new FormData();
   form.append("file", new Blob([new Uint8Array(wavBuffer)], { type: "audio/wav" }), "speech.wav");
-  form.append("model", "whisper-large-v3-turbo");
+  // Full large-v3 (not turbo): turbo is faster but loses accuracy on hard audio
+  // — accents, 8 kHz phone narrowband, background noise. Worth the small latency
+  // cost here since transcription quality drives the whole conversation.
+  form.append("model", "whisper-large-v3");
   form.append("language", "en");
 
   const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
