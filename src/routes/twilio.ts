@@ -87,7 +87,7 @@ function normalizeBookingDate(value: unknown, todayIso: string): string | null {
 // rejects background voices that are audible but distant. Lower it toward 600
 // if soft-spoken callers get cut off; raise it if room chatter still leaks in.
 const SPEECH_RMS_THRESHOLD = 800;
-const SILENCE_CHUNKS_END   = 35;   // 35 × 20 ms = 700 ms silence (end-of-turn)
+const SILENCE_CHUNKS_END   = 45;   // 45 × 20 ms = 900 ms silence (end-of-turn) — enough patience for a mid-sentence thinking pause without making every reply feel laggy
 const MAX_SPEECH_CHUNKS    = 1500; // 30 s safety cap
 const MIN_SPEECH_CHUNKS    = 16;   // 16 × 20 ms = 320 ms minimum real speech — a brief background blurt won't trigger a turn
 // Barge-in must be sustained for ~500 ms so a cough or short noise burst doesn't
@@ -106,9 +106,25 @@ const WHISPER_HALLUCINATIONS = new Set([
   "thank you for watching", "please subscribe", "subscribe", "bye", "bye bye",
   "see you next time", "see you in the next video", "subtitles by the amara org community"
 ]);
+// Carrier / handset "this call is being recorded" disclaimers get transcribed
+// and look like caller speech — the bot must ignore them, not answer them.
+const RECORDING_NOTICE = /\b(call|conversation)\s+(is|may be|is being|will be|could be)\s+(being\s+)?(recorded|monitored)|recorded\s+for\s+(quality|training)|for\s+(quality|training)\s+(and\s+\w+\s+)?purposes\b/i;
 function isWhisperHallucination(text: string): boolean {
   const norm = text.toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
-  return norm.length < 2 || WHISPER_HALLUCINATIONS.has(norm);
+  if (norm.length < 2 || WHISPER_HALLUCINATIONS.has(norm)) return true;
+  return RECORDING_NOTICE.test(text);
+}
+
+// Filled pauses / non-lexical vocalizations the caller makes while still
+// thinking ("um", "uh", "hmm", "ahh"…). When the whole utterance is just
+// these, the caller hasn't finished — keep listening instead of replying.
+// Affirmative backchannels ("uh huh", "mm hmm") are deliberately excluded so a
+// caller confirming something still advances the conversation.
+const FILLER_WORD = /^(u+h+|u+m+|h+m+|e+r+|e+r+m+|a+h+|e+h+|m+)$/;
+function isFillerOnly(text: string): boolean {
+  const norm = text.toLowerCase().replace(/[^a-z ]/g, "").replace(/\s+/g, " ").trim();
+  if (!norm) return false;
+  return norm.split(" ").every(w => FILLER_WORD.test(w));
 }
 const INTERRUPT_RMS_THRESHOLD = 1100; // louder than normal VAD — only close-mic speech cuts the bot off, not a noise spike
 
@@ -274,6 +290,14 @@ export async function twilioRoutes(app: FastifyInstance) {
         // These never occur as a real opening utterance — drop them.
         if (isWhisperHallucination(transcript)) {
           request.log.info({ transcript }, "Dropping likely STT hallucination");
+          isProcessing = false;
+          return;
+        }
+
+        // Caller is just hesitating ("um", "uh") — they aren't done talking.
+        // Don't reply; let VAD pick up the rest of their sentence.
+        if (isFillerOnly(transcript)) {
+          request.log.info({ transcript }, "Filler/hesitation only — waiting for caller to continue");
           isProcessing = false;
           return;
         }
