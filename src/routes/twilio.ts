@@ -393,6 +393,7 @@ export async function twilioRoutes(app: FastifyInstance) {
         const tokens     = extractControlTokens(output);
         const spokenText = tokens.spokenText || output;
 
+        request.log.info({ reply: spokenText }, "Agent said");
         await calls.addTurn(callId, "agent", spokenText);
         history.push({ role: "assistant", content: spokenText });
 
@@ -521,6 +522,7 @@ export async function twilioRoutes(app: FastifyInstance) {
         // Greeting
         const greeting = buildWelcomeGreeting(agent);
         history.push({ role: "assistant", content: greeting });
+        request.log.info({ reply: greeting }, "Agent said (greeting)");
         await calls.addTurn(callId, "agent", greeting);
         await playTts(greeting).catch(err => request.log.error(err, "Greeting TTS failed"));
         return;
