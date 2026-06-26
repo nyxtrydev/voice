@@ -128,7 +128,12 @@ function isFillerOnly(text: string): boolean {
   if (!norm) return false;
   return norm.split(" ").every(w => FILLER_WORD.test(w));
 }
-const INTERRUPT_RMS_THRESHOLD = 900; // a touch above normal VAD (800) — close-mic speech cuts the bot off, but not faint room noise. Lowered from 1100 so callers can actually interrupt.
+// Same floor as SPEECH_RMS_THRESHOLD on purpose. Any volume that counts as the
+// caller talking should also be able to cut the bot off — otherwise normal-volume
+// speech registers as a turn (RMS > 800) but never barges in (RMS < 900), so the
+// bot plays its sentence to the end and only then answers. Cough/noise rejection
+// is handled by the 240 ms sustain (INTERRUPT_MIN_CHUNKS), not by a louder gate.
+const INTERRUPT_RMS_THRESHOLD = SPEECH_RMS_THRESHOLD;
 
 export async function twilioRoutes(app: FastifyInstance) {
   const agents = agentRepository(pool);
