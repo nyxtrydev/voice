@@ -90,13 +90,15 @@ const SPEECH_RMS_THRESHOLD = 800;
 const SILENCE_CHUNKS_END   = 45;   // 45 × 20 ms = 900 ms silence (end-of-turn) — enough patience for a mid-sentence thinking pause without making every reply feel laggy
 const MAX_SPEECH_CHUNKS    = 1500; // 30 s safety cap
 const MIN_SPEECH_CHUNKS    = 16;   // 16 × 20 ms = 320 ms minimum real speech — a brief background blurt won't trigger a turn
-// Barge-in must be sustained for ~500 ms so a cough or short noise burst doesn't
+// Barge-in must be sustained long enough that a cough or short noise burst doesn't
 // cut the bot off — a cough is a sharp transient that fades well before this.
 // The counter decays (rather than hard-resetting) on quiet chunks, so the
 // micro-gaps between real syllables don't keep knocking it back to zero —
 // genuine "wait, stop" speech sustains long enough to reach the threshold.
-// If interrupting the bot feels sluggish, lower toward 18 (360 ms).
-const INTERRUPT_MIN_CHUNKS = 25;   // 25 × 20 ms = 500 ms sustained speech before barging in over the bot
+// Tuned down from 25 because barge-in was effectively impossible: the caller could
+// talk over the bot and it would keep going. Raise toward 18 (360 ms) if coughs
+// or room noise start cutting the bot off again.
+const INTERRUPT_MIN_CHUNKS = 12;   // 12 × 20 ms = 240 ms sustained speech before barging in over the bot
 
 // Phrases Whisper emits when fed silence or faint background noise. Matched on
 // the whole utterance only (normalized), so a real sentence containing "thank
@@ -126,7 +128,7 @@ function isFillerOnly(text: string): boolean {
   if (!norm) return false;
   return norm.split(" ").every(w => FILLER_WORD.test(w));
 }
-const INTERRUPT_RMS_THRESHOLD = 1100; // louder than normal VAD — only close-mic speech cuts the bot off, not a noise spike
+const INTERRUPT_RMS_THRESHOLD = 900; // a touch above normal VAD (800) — close-mic speech cuts the bot off, but not faint room noise. Lowered from 1100 so callers can actually interrupt.
 
 export async function twilioRoutes(app: FastifyInstance) {
   const agents = agentRepository(pool);
@@ -549,7 +551,9 @@ export async function twilioRoutes(app: FastifyInstance) {
           } else {
             // Decay instead of hard-reset: tolerate the brief sub-threshold dips
             // between syllables, but let a short burst (a cough) fade back to 0.
-            interruptChunks = Math.max(0, interruptChunks - 2);
+            // Decays slower than it builds (−1 vs +1) so the natural gaps inside a
+            // real "wait, stop" don't keep knocking progress back down.
+            interruptChunks = Math.max(0, interruptChunks - 1);
           }
         }
 
